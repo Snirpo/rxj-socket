@@ -1,10 +1,9 @@
 package com.snirpoapps.messaging.transport;
 
-import com.snirpoapps.messaging.wireformat.WireFormat;
-import io.reactivex.*;
-import io.reactivex.subjects.PublishSubject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import javax.net.ssl.*;
 import java.io.IOException;
@@ -13,16 +12,11 @@ import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.channels.CompletionHandler;
 
-/**
- * Created by cprin on 5-2-2016.
- */
-public class NioSocketTransport extends AbstractTransport<ByteBuffer> {
+public class RxSSLSocket {
+    private static final Logger LOGGER = LoggerFactory.getLogger(RxSSLSocket.class);
     private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
+
     private final SSLContext sslContext;
-
-    private PublishSubject<Single<ByteBuffer>> events$ = PublishSubject.create();
-
-    private Logger LOGGER = LoggerFactory.getLogger(NioSocketTransport.class);
 
     private AsynchronousSocketChannel socketChannel;
 
@@ -31,8 +25,7 @@ public class NioSocketTransport extends AbstractTransport<ByteBuffer> {
     private ByteBuffer outgoingData;
     private ByteBuffer incomingData;
 
-    public NioSocketTransport(SSLContext sslContext, WireFormat wireFormat) {
-        super(wireFormat);
+    public RxSSLSocket(SSLContext sslContext) {
         this.sslContext = sslContext;
     }
 
@@ -47,47 +40,52 @@ public class NioSocketTransport extends AbstractTransport<ByteBuffer> {
         incomingData = ByteBuffer.allocateDirect(sslSession.getPacketBufferSize());
     }
 
-    private Maybe<ByteBuffer> doRead() {
-        return Maybe.defer(() -> {
+    private Mono<ByteBuffer> doRead() {
+        return Mono.defer(() -> {
             if (incomingData.position() != 0) {
                 return doUnwrap();
             }
-            return readFromSocket().andThen(doUnwrap());
+            return readFromSocket().then(doUnwrap());
         });
     }
 
-    private Maybe<ByteBuffer> doUnwrap() {
-        return Maybe.defer(() -> {
+    private Mono<ByteBuffer> doUnwrap() {
+        return Mono.defer(() -> {
             ByteBuffer buffer = ByteBuffer.allocate(sslEngine.getSession().getApplicationBufferSize());
 
             incomingData.flip();
-            SSLEngineResult result = sslEngine.unwrap(incomingData, buffer);
+            SSLEngineResult result;
+            try {
+                result = sslEngine.unwrap(incomingData, buffer);
+            } catch (SSLException e) {
+                throw new RuntimeException(e);
+            }
             incomingData.compact();
 
             LOGGER.debug("READ " + result);
             switch (result.getStatus()) {
                 case OK:
-                    return Maybe.just(buffer);
+                    return Mono.just(buffer);
                 case BUFFER_OVERFLOW:
                     // Will occur when peerAppData's capacity is smaller than the data derived from incomingData's unwrap.
                     return doUnwrap();
                 case BUFFER_UNDERFLOW:
                     // Will occur either when no data was read from the peer or when the incomingData buffer was too small to hold all peer's data.
                     if (sslEngine.getSession().getPacketBufferSize() < incomingData.limit()) {
-                        return Maybe.empty();
+                        return Mono.empty();
                     }
                     incomingData.flip();
                     incomingData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize()).put(incomingData);
                     return doRead();
                 case CLOSED:
-                    return disconnect().andThen(Maybe.empty());
+                    return disconnect().then(Mono.empty());
             }
-            return Maybe.error(new IllegalStateException("Invalid SSL status: " + result.getStatus()));
+            return Mono.error(new IllegalStateException("Invalid SSL status: " + result.getStatus()));
         });
     }
 
-    private Completable readFromSocket() {
-        return Completable.create(emitter -> {
+    private Mono<Void> readFromSocket() {
+        return Mono.create(emitter -> {
             LOGGER.debug("READ_FROM_SOCKET");
             socketChannel.read(incomingData, socketChannel, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
                 @Override
@@ -102,25 +100,28 @@ public class NioSocketTransport extends AbstractTransport<ByteBuffer> {
                         sslEngine.closeOutbound();
                     }
                     //LOGGER.debug("INCOMING: " + new String(incomingData.array(), Charset.forName("UTF-8")));
-                    emitter.onComplete();
+                    emitter.success();
                 }
 
                 @Override
                 public void failed(Throwable exc, AsynchronousSocketChannel channel) {
-                    emitter.onError(exc);
+                    emitter.error(exc);
                 }
             });
         });
     }
 
-    @Override
-    public synchronized Completable connect(final String hostname, final int port) {
-        return Completable.create(subscriber -> {
+    public Mono<Void> connect(final String hostname, final int port) {
+        return Mono.create(subscriber -> {
             LOGGER.debug("CONNECT");
 
             initEngine();
             initBuffers();
-            socketChannel = AsynchronousSocketChannel.open();
+            try {
+                socketChannel = AsynchronousSocketChannel.open();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
 
             //subscriber.setCancellable(socketChannel::close);
             //try to connect to the server side
@@ -131,21 +132,21 @@ public class NioSocketTransport extends AbstractTransport<ByteBuffer> {
                     try {
                         sslEngine.beginHandshake();
                     } catch (SSLException e) {
-                        subscriber.onError(e);
+                        subscriber.error(e);
                     }
-                    subscriber.onComplete();
+                    subscriber.success();
                 }
 
                 @Override
                 public void failed(Throwable exception, AsynchronousSocketChannel channel) {
-                    subscriber.onError(exception);
+                    subscriber.error(exception);
                 }
             });
         });
     }
 
-    private Completable doHandshake() {
-        return Completable.defer(() -> {
+    private Mono<Void> doHandshake() {
+        return Mono.defer(() -> {
             SSLEngineResult.HandshakeStatus status = sslEngine.getHandshakeStatus();
             LOGGER.debug("HANDSHAKE " + status);
             switch (status) {
@@ -157,25 +158,24 @@ public class NioSocketTransport extends AbstractTransport<ByteBuffer> {
                     return runDelegatedTasks();
                 case FINISHED:
                 case NOT_HANDSHAKING:
-                    return Completable.complete();
+                    return Mono.empty();
             }
-            return Completable.error(new IllegalStateException("Invalid handshake status: " + status));
-        }).repeatUntil(() -> SSLEngineResult.HandshakeStatus.FINISHED.equals(sslEngine.getHandshakeStatus()) ||
-                SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING.equals(sslEngine.getHandshakeStatus()));
+            return Mono.error(new IllegalStateException("Invalid handshake status: " + status));
+        }).repeat(() -> SSLEngineResult.HandshakeStatus.FINISHED.equals(sslEngine.getHandshakeStatus()) ||
+                SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING.equals(sslEngine.getHandshakeStatus())).then();
     }
 
-    @Override
-    public synchronized Completable disconnect() {
-        return Completable.defer(() -> {
+    public Mono<Void> disconnect() {
+        return Mono.defer(() -> {
             LOGGER.debug("DISCONNECT");
             sslEngine.closeOutbound();
             return doHandshake()
-                    .andThen(disposeSocketChannel());
+                    .then(disposeSocketChannel());
         });
     }
 
-    private Completable disposeSocketChannel() {
-        return Completable.fromRunnable(() -> {
+    private Mono<Void> disposeSocketChannel() {
+        return Mono.fromRunnable(() -> {
             try {
                 socketChannel.close();
             } catch (IOException e) {
@@ -185,11 +185,15 @@ public class NioSocketTransport extends AbstractTransport<ByteBuffer> {
         });
     }
 
-    @Override
-    public Completable send(final ByteBuffer buffer) {
-        return Completable.defer(() -> {
+    public Mono<Void> send(final ByteBuffer buffer) {
+        return Mono.defer(() -> {
             outgoingData.clear();
-            SSLEngineResult result = sslEngine.wrap(buffer, outgoingData);
+            SSLEngineResult result = null;
+            try {
+                result = sslEngine.wrap(buffer, outgoingData);
+            } catch (SSLException e) {
+                throw new RuntimeException(e);
+            }
             LOGGER.debug("WRITE " + result);
 
             switch (result.getStatus()) {
@@ -203,58 +207,48 @@ public class NioSocketTransport extends AbstractTransport<ByteBuffer> {
                     outgoingData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize());
                     return send(buffer);
                 case BUFFER_UNDERFLOW:
-                    return Completable.error(new SSLException("Buffer underflow occurred after a wrap."));
+                    return Mono.error(new SSLException("Buffer underflow occurred after a wrap."));
                 case CLOSED:
                     return disconnect();
             }
-            return Completable.error(new IllegalStateException("Invalid SSL status: " + result.getStatus()));
-        }).repeatUntil(() -> !buffer.hasRemaining());
+            return Mono.error(new IllegalStateException("Invalid SSL status: " + result.getStatus()));
+        }).repeat(() -> !buffer.hasRemaining()).then();
 
     }
 
-    private Completable writeToSocket(ByteBuffer buffer) {
-        return Completable.create(emitter -> {
+    private Mono<Void> writeToSocket(ByteBuffer buffer) {
+        return Mono.create(emitter -> {
             //LOGGER.debug("OUTGOING: " + new String(buffer.array(), Charset.forName("UTF-8")));
             socketChannel.write(buffer, socketChannel, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
                 @Override
                 public void completed(Integer result, AsynchronousSocketChannel attachment) {
-                    emitter.onComplete();
+                    emitter.success();
                 }
 
                 @Override
                 public void failed(Throwable exception, AsynchronousSocketChannel attachment) {
-                    emitter.onError(exception);
+                    emitter.error(exception);
                 }
             });
-        }).repeatUntil(() -> !buffer.hasRemaining());
+        }).repeat(() -> !buffer.hasRemaining()).then();
     }
 
-    public Flowable<ByteBuffer> open(String hostname, int port) {
-        return this.connect(hostname, port).andThen(
+    public Flux<ByteBuffer> open(String hostname, int port) {
+        return this.connect(hostname, port).thenMany(
                 doHandshake()
-                        .andThen(doRead())
-                        .repeatUntil(() -> sslEngine.isInboundDone() && sslEngine.isOutboundDone())
+                        .then(doRead())
+                        .repeat(() -> sslEngine.isInboundDone() && sslEngine.isOutboundDone())
                         .doOnError(err -> LOGGER.error("ERROR", err))
-                        .onErrorResumeNext(disconnect().toFlowable())
+                //.onErrorResumeNext(disconnect().toFlowable())
         );
     }
 
-    @Override
-    public Observable<ByteBuffer> messages() {
-        return null;
-    }
-
-    @Override
-    public Observable<ConnectionState> connection() {
-        throw new RuntimeException("Not supported");
-    }
-
-    private Completable runDelegatedTasks() {
-        return Completable.defer(() -> {
-            Completable out = Completable.complete();
+    private Mono<Void> runDelegatedTasks() {
+        return Mono.defer(() -> {
+            Mono<Void> out = Mono.empty();
             Runnable task;
             while ((task = sslEngine.getDelegatedTask()) != null) {
-                out = out.mergeWith(Completable.fromRunnable(task));
+                out = out.mergeWith(Mono.fromRunnable(task)).then();
             }
             return out;
         });
