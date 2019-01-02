@@ -58,7 +58,7 @@ public class RxSSLSocket {
             try {
                 result = sslEngine.unwrap(incomingData, buffer);
             } catch (SSLException e) {
-                throw new RuntimeException(e);
+                return Mono.error(e);
             }
             incomingData.compact();
 
@@ -192,7 +192,7 @@ public class RxSSLSocket {
             try {
                 result = sslEngine.wrap(buffer, outgoingData);
             } catch (SSLException e) {
-                throw new RuntimeException(e);
+                return Mono.error(e);
             }
             LOGGER.debug("WRITE " + result);
 
