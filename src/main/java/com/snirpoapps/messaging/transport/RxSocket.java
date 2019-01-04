@@ -4,17 +4,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.channels.CompletionHandler;
-import java.nio.charset.StandardCharsets;
 
 public class RxSocket {
     private static final Logger LOGGER = LoggerFactory.getLogger(RxSocket.class);
 
     private int bufferSize = 2048;
+    private String hostname;
+    private int port;
 
-    public RxSocket() {
+    private RxSocket() {
     }
 
     public RxSocket bufferSize(int bufferSize) {
@@ -22,8 +25,42 @@ public class RxSocket {
         return this;
     }
 
-    public void connect() {
+    public RxSocket hostname(String hostname) {
+        this.hostname = hostname;
+        return this;
+    }
 
+    public RxSocket port(int port) {
+        this.port = port;
+        return this;
+    }
+
+    public Mono<Connection> connect() {
+        final String hostname = this.hostname;
+        final int port = this.port;
+        final int bufferSize = this.bufferSize;
+
+        return Mono.<Connection>create(subscriber -> {
+            AsynchronousSocketChannel socketChannel;
+
+            try {
+                socketChannel = AsynchronousSocketChannel.open();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+
+            socketChannel.connect(new InetSocketAddress(hostname, port), null, new CompletionHandler<Void, AsynchronousSocketChannel>() {
+                @Override
+                public void completed(Void result, AsynchronousSocketChannel channel) {
+                    subscriber.success(new Connection(socketChannel, bufferSize));
+                }
+
+                @Override
+                public void failed(Throwable exception, AsynchronousSocketChannel channel) {
+                    subscriber.error(exception);
+                }
+            });
+        }).cache();
     }
 
     public static RxSocket create() {
@@ -33,98 +70,39 @@ public class RxSocket {
     public class Connection {
         private final AsynchronousSocketChannel socketChannel;
         private final ByteBuffer outgoingData;
-        private final ByteBuffer incomingData;
+        private ByteBuffer incomingData;
 
-        private Connection(AsynchronousSocketChannel socketChannel) {
+        private Connection(AsynchronousSocketChannel socketChannel, int bufferSize) {
             this.socketChannel = socketChannel;
             this.outgoingData = ByteBuffer.allocateDirect(bufferSize);
             this.incomingData = ByteBuffer.allocateDirect(bufferSize);
         }
 
-        public Mono<byte[]> readBytes(byte[] dst, int offset, int length) {
-            return readBytesFromSocket(length).map(buffer -> {
-                buffer.get(dst, offset, length);
-                return dst;
-            });
-        }
-
-        public Mono<byte[]> readBytes(byte[] dst) {
-            return readBytesFromSocket(dst.length).map(buffer -> {
-                buffer.get(dst);
-                return dst;
-            });
-        }
-
-        public Mono<byte[]> readBytes(int length) {
-            return readBytesFromSocket(length).map(buffer -> {
-                byte[] dst = new byte[length];
-                buffer.get(dst);
-                return dst;
-            });
-        }
-
-        public Mono<String> readUTF8() {
-            // Not efficient
-            return readUnsignedShort()
-                    .flatMap(this::readBytes)
-                    .map(val -> new String(val, StandardCharsets.UTF_8));
-        }
-
-        public Mono<Short> readUnsignedByte() {
-            return readByte().map(val -> (short) (val & 0xff));
-        }
-
-        public Mono<Byte> readByte() {
-            return readBytesFromSocket(1).map(ByteBuffer::get);
-        }
-
-        public Mono<Integer> readUnsignedShort() {
-            return readShort().map(val -> val & 0xffff);
-        }
-
-        public Mono<Short> readShort() {
-            return readBytesFromSocket(2).map(ByteBuffer::getShort);
-        }
-
-        public Mono<Character> readChar() {
-            return readBytesFromSocket(2).map(ByteBuffer::getChar);
-        }
-
-        public Mono<Long> readUnsignedInt() {
-            return readInt().map(val -> (long) val & 0xffffffffL);
-        }
-
-        public Mono<Integer> readInt() {
-            return readBytesFromSocket(4).map(ByteBuffer::getInt);
-        }
-
-        public Mono<Long> readLong() {
-            return readBytesFromSocket(8).map(ByteBuffer::getLong);
-        }
-
-        public Mono<Float> readFloat() {
-            return readBytesFromSocket(4).map(ByteBuffer::getFloat);
-        }
-
-        public Mono<Double> readDouble() {
-            return readBytesFromSocket(8).map(ByteBuffer::getDouble);
-        }
-
-        private Mono<ByteBuffer> readBytesFromSocket(int numBytes) {
-            return Mono.<ByteBuffer>create(emitter -> {
-                if (incomingData.remaining() >= numBytes) {
+        public Mono<ByteBuffer> read(int numBytes) {
+            return Mono.create(emitter -> {
+                // Return from buffer if there are enough bytes to be read
+                if (incomingData.position() != 0 && incomingData.remaining() >= numBytes) {
                     emitter.success(incomingData);
                     return;
                 }
 
-                LOGGER.debug("READ_FROM_SOCKET");
-                socketChannel.read(incomingData, socketChannel, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
+                // Move remaining bytes to beginning of buffer
+                incomingData.compact();
+
+                // dynamic increase buffer size
+                // TODO: set max
+                if (incomingData.remaining() < numBytes) {
+                    incomingData = ByteBuffer.allocateDirect(incomingData.position() + numBytes).put(incomingData);
+                }
+
+                socketChannel.read(incomingData, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
                     @Override
                     public void completed(Integer count, AsynchronousSocketChannel channel) {
                         if (count < 0) {
                             emitter.success();
                         }
                         //LOGGER.debug("INCOMING: " + new String(incomingData.array(), Charset.forName("UTF-8")));
+                        incomingData.flip();
                         emitter.success(incomingData);
                     }
 
@@ -134,6 +112,24 @@ public class RxSocket {
                     }
                 });
             });
+        }
+
+        private Mono<Void> write(ByteBuffer buffer) {
+            return Mono.create(emitter -> {
+                //LOGGER.debug("OUTGOING: " + new String(buffer.array(), Charset.forName("UTF-8")));
+                //TODO: should use outgoing buffer
+                socketChannel.write(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
+                    @Override
+                    public void completed(Integer result, AsynchronousSocketChannel attachment) {
+                        emitter.success();
+                    }
+
+                    @Override
+                    public void failed(Throwable exception, AsynchronousSocketChannel attachment) {
+                        emitter.error(exception);
+                    }
+                });
+            }).repeat(() -> !buffer.hasRemaining()).then();
         }
     }
 }
