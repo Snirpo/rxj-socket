@@ -2,9 +2,11 @@ package com.snirpoapps.messaging.transport;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
@@ -35,24 +37,32 @@ public class RxSocket {
         return this;
     }
 
-    public Mono<Connection> connect() {
+    public Flux<Connection> connect() {
         final String hostname = this.hostname;
         final int port = this.port;
         final int bufferSize = this.bufferSize;
 
-        return Mono.<Connection>create(subscriber -> {
+        return Flux.<Connection>create(subscriber -> {
             AsynchronousSocketChannel socketChannel;
 
             try {
                 socketChannel = AsynchronousSocketChannel.open();
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                throw new UncheckedIOException(e);
             }
+
+            subscriber.onDispose(() -> {
+                try {
+                    socketChannel.close();
+                } catch (IOException e) {
+                    // ignore
+                }
+            });
 
             socketChannel.connect(new InetSocketAddress(hostname, port), null, new CompletionHandler<Void, AsynchronousSocketChannel>() {
                 @Override
                 public void completed(Void result, AsynchronousSocketChannel channel) {
-                    subscriber.success(new Connection(socketChannel, bufferSize));
+                    subscriber.next(new Connection(socketChannel, bufferSize));
                 }
 
                 @Override
@@ -60,7 +70,7 @@ public class RxSocket {
                     subscriber.error(exception);
                 }
             });
-        }).cache();
+        });
     }
 
     public static RxSocket create() {
@@ -114,7 +124,7 @@ public class RxSocket {
             });
         }
 
-        private Mono<Void> write(ByteBuffer buffer) {
+        public Mono<Void> write(ByteBuffer buffer) {
             return Mono.create(emitter -> {
                 //LOGGER.debug("OUTGOING: " + new String(buffer.array(), Charset.forName("UTF-8")));
                 //TODO: should use outgoing buffer

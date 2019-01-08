@@ -18,8 +18,9 @@ public class RxSocketTest {
                 .bufferSize(2048)
                 .hostname("localhost")
                 .connect()
-                .flatMapMany(connection -> connection.read(1).repeat())
+                .switchMap(connection -> connection.read(1).repeat())
                 .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
+                .take(1)
                 .blockLast();
     }
 

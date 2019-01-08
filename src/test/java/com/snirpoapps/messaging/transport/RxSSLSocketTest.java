@@ -3,7 +3,7 @@ package com.snirpoapps.messaging.transport;
 import org.junit.Test;
 
 import javax.net.ssl.SSLContext;
-
+import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 
 public class RxSSLSocketTest {
@@ -14,8 +14,19 @@ public class RxSSLSocketTest {
         //System.setProperty("https.protocols", "TLSv1.2");
         //System.setProperty("javax.net.debug", "all");
 
-        RxSSLSocket socketTransport = new RxSSLSocket(SSLContext.getDefault());
-        socketTransport.open("tls-v1-2.badssl.com", 1012).blockFirst();
+
+        RxSocket rxSocket = RxSocket.create()
+                .port(443)
+                .bufferSize(2048)
+                .hostname("tls-v1-2.badssl.com");
+
+        RxSSLSocket.create()
+                .rxSocket(rxSocket)
+                .sslContext(SSLContext.getDefault())
+                .connect()
+                .switchMap(connection -> connection.read(1).repeat())
+                .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
+                .blockLast();
     }
 
 }
