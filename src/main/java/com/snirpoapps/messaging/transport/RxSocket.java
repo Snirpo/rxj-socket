@@ -88,19 +88,24 @@ public class RxSocket {
             this.incomingData = ByteBuffer.allocateDirect(bufferSize);
         }
 
+        public Mono<ByteBuffer> read() {
+            return read(-1);
+        }
+
         public Mono<ByteBuffer> read(int numBytes) {
             return Mono.create(emitter -> {
                 // Return from buffer if there are enough bytes to be read
-                if (incomingData.position() != 0 && incomingData.remaining() >= numBytes) {
-                    emitter.success(incomingData);
-                    return;
+                if (incomingData.position() != 0) {
+                    if (incomingData.hasRemaining()) {
+                        emitter.success(incomingData);
+                        return;
+                    }
+
+                    // Move remaining bytes to beginning of buffer
+                    incomingData.compact();
                 }
 
-                // Move remaining bytes to beginning of buffer
-                incomingData.compact();
-
                 // dynamic increase buffer size
-                // TODO: set max
                 if (incomingData.remaining() < numBytes) {
                     incomingData = ByteBuffer.allocateDirect(incomingData.position() + numBytes).put(incomingData);
                 }
@@ -109,7 +114,8 @@ public class RxSocket {
                     @Override
                     public void completed(Integer count, AsynchronousSocketChannel channel) {
                         if (count < 0) {
-                            emitter.success();
+                            emitter.error(new IOException("Unexpected end of stream"));
+                            return;
                         }
                         //LOGGER.debug("INCOMING: " + new String(incomingData.array(), Charset.forName("UTF-8")));
                         incomingData.flip();
@@ -139,7 +145,7 @@ public class RxSocket {
                         emitter.error(exception);
                     }
                 });
-            }).repeat(() -> !buffer.hasRemaining()).then();
+            }).repeat(buffer::hasRemaining).then();
         }
     }
 }

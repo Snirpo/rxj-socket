@@ -3,10 +3,22 @@ package com.snirpoapps.messaging.transport;
 import org.junit.Test;
 
 import javax.net.ssl.SSLContext;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 
 public class RxSSLSocketTest {
+
+    private static final String HTTP_MESSAGE = "" +
+            "GET / HTTP/1.1\n" +
+            "Host: tls-v1-2.badssl.com:1012\n" +
+            "Connection: keep-alive\n" +
+            "Cache-Control: max-age=0\n" +
+            "Upgrade-Insecure-Requests: 1\n" +
+            "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.109 Safari/537.36\n" +
+            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8\n" +
+            "Accept-Encoding: gzip, deflate, br\n" +
+            "Accept-Language: en-US,en;q=0.9,nl-NL;q=0.8,nl;q=0.7\n";
 
     @Test
     public void connect() throws NoSuchAlgorithmException, InterruptedException {
@@ -16,15 +28,19 @@ public class RxSSLSocketTest {
 
 
         RxSocket rxSocket = RxSocket.create()
-                .port(443)
-                .bufferSize(2048)
+                .port(1012)
+                .bufferSize(100000)
                 .hostname("tls-v1-2.badssl.com");
 
         RxSSLSocket.create()
                 .rxSocket(rxSocket)
                 .sslContext(SSLContext.getDefault())
                 .connect()
-                .switchMap(connection -> connection.read(1).repeat())
+                .switchMap(connection -> {
+//                    return connection.write(ByteBuffer.wrap(HTTP_MESSAGE.getBytes(StandardCharsets.UTF_8)))
+//                            .thenMany(connection.read(1).repeat());
+                    return connection.read(1).repeat();
+                })
                 .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
                 .blockLast();
     }

@@ -56,13 +56,24 @@ public class RxSSLSocket {
             this.sslEngine = sslContext.createSSLEngine();
             this.sslEngine.setUseClientMode(true);
 
+            try {
+                sslEngine.beginHandshake();
+            } catch (SSLException e) {
+                throw new RuntimeException(e);
+            }
+
             this.incomingData = ByteBuffer.allocateDirect(sslEngine.getSession().getApplicationBufferSize());
             this.outgoingData = ByteBuffer.allocateDirect(sslEngine.getSession().getApplicationBufferSize());
         }
 
         public Mono<ByteBuffer> read(int numBytes) {
+            LOGGER.debug("READ " + numBytes);
             return doHandshake()
-                    .then(connection.read(numBytes))
+                    .then(doRead(numBytes));
+        }
+
+        private Mono<ByteBuffer> doRead(int numBytes) {
+            return connection.read(numBytes)
                     .flatMap(this::doUnwrap);
         }
 
@@ -74,7 +85,7 @@ public class RxSSLSocket {
                 throw new RuntimeException(e);
             }
 
-            LOGGER.debug("READ " + result);
+            LOGGER.debug("UNWRAP " + result);
             switch (result.getStatus()) {
                 case OK:
                     return Mono.just(incomingData);
@@ -84,7 +95,7 @@ public class RxSSLSocket {
                     return doUnwrap(in);
                 case BUFFER_UNDERFLOW:
                     // Will occur either when no data was read from the peer or when the incomingData buffer was too small to hold all peer's data.
-                    return read(sslEngine.getSession().getPacketBufferSize());
+                    return doRead(sslEngine.getSession().getPacketBufferSize());
                 case CLOSED:
                     // TODO
             }
@@ -97,30 +108,36 @@ public class RxSSLSocket {
                 LOGGER.debug("HANDSHAKE " + status);
                 switch (status) {
                     case NEED_WRAP:
-                        return write(EMPTY_BUFFER);
+                        return doWrite(EMPTY_BUFFER)
+                                .then(doHandshake());
                     case NEED_UNWRAP:
-                        return read(sslEngine.getSession().getPacketBufferSize()).ignoreElement();
+                        return doRead(sslEngine.getSession().getPacketBufferSize())
+                                .then(doHandshake());
                     case NEED_TASK:
-                        return runDelegatedTasks();
-                    case FINISHED:
+                        return runDelegatedTasks()
+                                .then(doHandshake());
                     case NOT_HANDSHAKING:
+                    case FINISHED:
                         return Mono.empty();
                 }
                 return Mono.error(new IllegalStateException("Invalid handshake status: " + status));
-            }).repeat(() -> SSLEngineResult.HandshakeStatus.FINISHED.equals(sslEngine.getHandshakeStatus()) ||
-                    SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING.equals(sslEngine.getHandshakeStatus())).then();
+            }).then();
         }
 
         private Mono<Void> runDelegatedTasks() {
-            Mono<Void> out = Mono.empty();
-            Runnable task;
-            while ((task = sslEngine.getDelegatedTask()) != null) {
-                out = out.mergeWith(Mono.fromRunnable(task)).then();
+            Runnable runnable = sslEngine.getDelegatedTask();
+            LOGGER.debug("TASK");
+            if (runnable != null) {
+                return Mono.fromRunnable(runnable).then(runDelegatedTasks());
             }
-            return out;
+            return Mono.empty();
         }
 
-        private Mono<Void> write(ByteBuffer buffer) {
+        public Mono<Void> write(ByteBuffer buffer) {
+            return doHandshake().then(doWrite(buffer));
+        }
+
+        private Mono<Void> doWrite(ByteBuffer buffer) {
             return Mono.defer(() -> {
                 outgoingData.clear();
                 SSLEngineResult result;
@@ -129,7 +146,7 @@ public class RxSSLSocket {
                 } catch (SSLException e) {
                     return Mono.error(e);
                 }
-                LOGGER.debug("WRITE " + result);
+                LOGGER.debug("WRAP " + result);
 
                 switch (result.getStatus()) {
                     case OK:
@@ -140,14 +157,14 @@ public class RxSSLSocket {
                         // Since outgoingData is set to session's packet size we should not get to this point because SSLEngine is supposed
                         // to produce messages smaller or equal to that, but a general handling would be the following:
                         outgoingData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize());
-                        return write(buffer);
+                        return doWrite(buffer);
                     case BUFFER_UNDERFLOW:
                         return Mono.error(new SSLException("Buffer underflow occurred after a wrap."));
                     case CLOSED:
                         // TODO
                 }
                 return Mono.error(new IllegalStateException("Invalid SSL status: " + result.getStatus()));
-            }).repeat(() -> !buffer.hasRemaining()).then();
+            }).repeat(buffer::hasRemaining).then();
         }
     }
 }
