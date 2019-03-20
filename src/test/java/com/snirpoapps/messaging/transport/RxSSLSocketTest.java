@@ -9,19 +9,20 @@ import java.security.NoSuchAlgorithmException;
 
 public class RxSSLSocketTest {
 
-    private static final String HTTP_MESSAGE = "" +
-            "GET / HTTP/1.1\n" +
-            "Host: tls-v1-2.badssl.com:1012\n" +
-            "Connection: keep-alive\n" +
-            "Cache-Control: max-age=0\n";
+    private static final byte[] HTTP_MESSAGE = (
+            "GET / HTTP/1.1\r\n" +
+                    "Host: tls-v1-2.badssl.com:1012\r\n" +
+                    "Connection: keep-alive\r\n" +
+                    "Cache-Control: max-age=0\r\n" +
+                    "\r\n"
+    ).getBytes(StandardCharsets.UTF_8);
 
     @Test
     public void connect() throws NoSuchAlgorithmException, InterruptedException {
         System.setProperty(org.slf4j.impl.SimpleLogger.DEFAULT_LOG_LEVEL_KEY, "TRACE");
         //System.setProperty("https.protocols", "TLSv1.2");
         //System.setProperty("javax.net.debug", "all");
-
-
+        
         RxSocketChannel rxSocket = RxSocketChannel.create()
                 .port(1012)
                 .hostname("tls-v1-2.badssl.com");
@@ -31,8 +32,7 @@ public class RxSSLSocketTest {
                 .sslContext(SSLContext.getDefault())
                 .connect()
                 .switchMap(connection -> {
-                    ByteBuffer buffer = ByteBuffer.wrap(HTTP_MESSAGE.getBytes(StandardCharsets.UTF_8));
-                    buffer.position(0);
+                    ByteBuffer buffer = ByteBuffer.wrap(HTTP_MESSAGE);
                     return connection.write(buffer)
                             .then(connection.read(1));
                     //return connection.read(1).repeat();
