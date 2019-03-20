@@ -67,7 +67,7 @@ public class RxSocket {
         public Mono<ByteBuffer> read() {
             return Mono.defer(() -> {
                 incomingData.clear();
-                return connection.read(incomingData);
+                return connection.read(incomingData.asReadOnlyBuffer());
             });
         }
 

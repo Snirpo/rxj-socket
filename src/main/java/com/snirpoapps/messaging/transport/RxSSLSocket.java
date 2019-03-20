@@ -109,7 +109,7 @@ public class RxSSLSocket {
                 switch (result.getStatus()) {
                     case OK:
                         incomingAppData.flip();
-                        return Mono.just(incomingAppData);
+                        return Mono.just(incomingAppData.asReadOnlyBuffer());
                     case BUFFER_OVERFLOW:
                         // Will occur when peerAppData's capacity is smaller than the data derived from incomingAppData's unwrap.
                         this.incomingAppData = ByteBuffer.allocateDirect(sslEngine.getSession().getApplicationBufferSize());
