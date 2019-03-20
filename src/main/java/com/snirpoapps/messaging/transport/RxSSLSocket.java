@@ -71,22 +71,26 @@ public class RxSSLSocket {
         }
 
         public Mono<ByteBuffer> read(int numBytes) {
-            return doHandshake().then(connection.read(incomingPacketData)
-                    .flatMap(this::doUnwrap));
+            return doHandshake().then(doUnwrap());
         }
 
-        private Mono<ByteBuffer> doUnwrap(ByteBuffer in) {
+        private Mono<ByteBuffer> doRead() {
+            LOGGER.debug("doRead");
+            return connection.read(incomingPacketData);
+        }
+
+        private Mono<ByteBuffer> doUnwrap() {
             return Mono.defer(() -> {
-                if (!in.hasRemaining()) {
-                    in.clear();
-                    return connection.read(incomingPacketData)
-                            .flatMap(this::doUnwrap);
+                LOGGER.debug("doUnwrap");
+                if (!incomingPacketData.hasRemaining()) {
+                    incomingPacketData.clear();
+                    return doRead().then(doUnwrap());
                 }
 
                 incomingAppData.clear();
                 SSLEngineResult result;
                 try {
-                    result = sslEngine.unwrap(in, incomingAppData);
+                    result = sslEngine.unwrap(incomingPacketData, incomingAppData);
                 } catch (SSLException e) {
                     throw new RuntimeException(e);
                 }
@@ -99,12 +103,11 @@ public class RxSSLSocket {
                     case BUFFER_OVERFLOW:
                         // Will occur when peerAppData's capacity is smaller than the data derived from incomingAppData's unwrap.
                         this.incomingAppData = ByteBuffer.allocateDirect(sslEngine.getSession().getApplicationBufferSize());
-                        return doUnwrap(in);
+                        return doUnwrap();
                     case BUFFER_UNDERFLOW:
                         // Will occur either when no data was read from the peer or when the incomingAppData buffer was too small to hold all peer's data.
                         this.incomingPacketData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize()).put(incomingPacketData);
-                        return connection.read(incomingPacketData)
-                                .flatMap(this::doUnwrap);
+                        return doRead().then(doUnwrap());
                     case CLOSED:
                         // TODO
                 }
@@ -121,7 +124,7 @@ public class RxSSLSocket {
                         return doWrap(EMPTY_BUFFER)
                                 .then(doHandshake());
                     case NEED_UNWRAP:
-                        return doUnwrap(incomingPacketData)
+                        return doUnwrap()
                                 .then(doHandshake());
                     case NEED_TASK:
                         return runDelegatedTasks()
