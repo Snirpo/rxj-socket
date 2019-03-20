@@ -42,35 +42,11 @@ public class RxSocket {
         final int port = this.port;
         final int bufferSize = this.bufferSize;
 
-        return Flux.<Connection>create(subscriber -> {
-            AsynchronousSocketChannel socketChannel;
-
-            try {
-                socketChannel = AsynchronousSocketChannel.open();
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-
-            subscriber.onDispose(() -> {
-                try {
-                    socketChannel.close();
-                } catch (IOException e) {
-                    // ignore
-                }
-            });
-
-            socketChannel.connect(new InetSocketAddress(hostname, port), null, new CompletionHandler<Void, AsynchronousSocketChannel>() {
-                @Override
-                public void completed(Void result, AsynchronousSocketChannel channel) {
-                    subscriber.next(new Connection(socketChannel, bufferSize));
-                }
-
-                @Override
-                public void failed(Throwable exception, AsynchronousSocketChannel channel) {
-                    subscriber.error(exception);
-                }
-            });
-        });
+        return RxSocketChannel.create()
+                .hostname(hostname)
+                .port(port)
+                .connect()
+                .map(connection -> new Connection(connection, bufferSize));
     }
 
     public static RxSocket create() {
@@ -78,66 +54,31 @@ public class RxSocket {
     }
 
     public class Connection {
-        private final AsynchronousSocketChannel socketChannel;
+        private final RxSocketChannel.Connection connection;
         private final ByteBuffer outgoingData;
         private ByteBuffer incomingData;
 
-        private Connection(AsynchronousSocketChannel socketChannel, int bufferSize) {
-            this.socketChannel = socketChannel;
+        private Connection(RxSocketChannel.Connection connection, int bufferSize) {
+            this.connection = connection;
             this.outgoingData = ByteBuffer.allocateDirect(bufferSize);
             this.incomingData = ByteBuffer.allocateDirect(bufferSize);
         }
 
-        public Flux<ByteBuffer> read() {
-            return read(-1);
-        }
-
-        public Flux<ByteBuffer> read(int numBytes) {
-            return Flux.create(emitter -> {
-                if (incomingData.position() != 0 && incomingData.hasRemaining()) {
-                    emitter.next(incomingData);
-                }
-
-                // dynamic increase buffer size
-                if (incomingData.remaining() < numBytes) {
-                    incomingData = ByteBuffer.allocateDirect(incomingData.position() + numBytes).put(incomingData);
-                }
-
-                socketChannel.read(incomingData, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
-                    @Override
-                    public void completed(Integer count, AsynchronousSocketChannel channel) {
-                        if (count < 0) {
-                            emitter.error(new IOException("Unexpected end of stream"));
-                            return;
-                        }
-                        //LOGGER.debug("INCOMING: " + new String(incomingData.array(), Charset.forName("UTF-8")));
-                        incomingData.flip();
-                        emitter.next(incomingData);
-                    }
-
-                    @Override
-                    public void failed(Throwable exc, AsynchronousSocketChannel channel) {
-                        emitter.error(exc);
-                    }
-                });
+        public Mono<ByteBuffer> read() {
+            return Mono.defer(() -> {
+                incomingData.clear();
+                return connection.read(incomingData);
             });
         }
 
         public Mono<Void> write(ByteBuffer buffer) {
-            return Mono.create(emitter -> {
-                //LOGGER.debug("OUTGOING: " + new String(buffer.array(), Charset.forName("UTF-8")));
-                //TODO: should use outgoing buffer
-                socketChannel.write(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
-                    @Override
-                    public void completed(Integer result, AsynchronousSocketChannel attachment) {
-                        emitter.success();
-                    }
-
-                    @Override
-                    public void failed(Throwable exception, AsynchronousSocketChannel attachment) {
-                        emitter.error(exception);
-                    }
-                });
+            return Mono.defer(() -> {
+                outgoingData.clear();
+                while (buffer.hasRemaining() && outgoingData.hasRemaining()) {
+                    outgoingData.put(buffer.get());
+                }
+                outgoingData.flip();
+                return connection.write(outgoingData);
             }).repeat(buffer::hasRemaining).then();
         }
     }

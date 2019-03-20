@@ -15,7 +15,8 @@ public class RxSSLSocket {
     private static final Logger LOGGER = LoggerFactory.getLogger(RxSSLSocket.class);
 
     private SSLContext sslContext;
-    private RxSocketChannel rxSocket;
+    private String hostname;
+    private int port;
 
     private RxSSLSocket() {
     }
@@ -24,20 +25,29 @@ public class RxSSLSocket {
         return new RxSSLSocket();
     }
 
-    public RxSSLSocket rxSocketChannel(RxSocketChannel rxSocket) {
-        this.rxSocket = rxSocket;
-        return this;
-    }
-
     public RxSSLSocket sslContext(SSLContext sslContext) {
         this.sslContext = sslContext;
         return this;
     }
 
+    public RxSSLSocket hostname(String hostname) {
+        this.hostname = hostname;
+        return this;
+    }
+
+    public RxSSLSocket port(int port) {
+        this.port = port;
+        return this;
+    }
+
     public Flux<Connection> connect() {
         final SSLContext sslContext = this.sslContext;
+        final String hostname = this.hostname;
+        final int port = this.port;
 
-        return rxSocket
+        return RxSocketChannel.create()
+                .hostname(hostname)
+                .port(port)
                 .connect()
                 .map(c -> new Connection(c, sslContext));
     }
@@ -70,7 +80,7 @@ public class RxSSLSocket {
             this.outgoingPacketData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize());
         }
 
-        public Mono<ByteBuffer> read(int numBytes) {
+        public Mono<ByteBuffer> read() {
             return doHandshake().then(doUnwrap());
         }
 

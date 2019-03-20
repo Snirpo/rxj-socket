@@ -100,8 +100,6 @@ public class RxSocketChannel {
 
         public Mono<Void> write(ByteBuffer buffer) {
             return Mono.create(emitter -> {
-                //LOGGER.debug("OUTGOING: " + new String(buffer.array(), Charset.forName("UTF-8")));
-                //TODO: should use outgoing buffer
                 socketChannel.write(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
                     @Override
                     public void completed(Integer result, AsynchronousSocketChannel attachment) {

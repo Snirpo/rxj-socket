@@ -2,10 +2,19 @@ package com.snirpoapps.messaging.transport;
 
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 
 public class RxSocketTest {
+
+    private static final byte[] HTTP_MESSAGE = (
+            "GET / HTTP/1.1\r\n" +
+                    "Host: www.httpvshttps.com\r\n" +
+                    "Connection: keep-alive\r\n" +
+                    "Cache-Control: max-age=0\r\n" +
+                    "\r\n"
+    ).getBytes(StandardCharsets.UTF_8);
 
     @Test
     public void connect() throws NoSuchAlgorithmException, InterruptedException {
@@ -14,13 +23,15 @@ public class RxSocketTest {
         //System.setProperty("javax.net.debug", "all");
 
         RxSocket.create()
-                .port(9000)
-                .bufferSize(2048)
-                .hostname("localhost")
+                .port(80)
+                .bufferSize(16384)
+                .hostname("www.httpvshttps.com")
                 .connect()
-                .switchMap(connection -> connection.read(1).repeat())
+                .switchMap(connection ->
+                        connection.write(ByteBuffer.wrap(HTTP_MESSAGE))
+                                .thenMany(connection.read().repeat())
+                )
                 .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
-                .take(1)
                 .blockLast();
     }
 

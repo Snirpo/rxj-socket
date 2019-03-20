@@ -22,19 +22,16 @@ public class RxSSLSocketTest {
         System.setProperty(org.slf4j.impl.SimpleLogger.DEFAULT_LOG_LEVEL_KEY, "TRACE");
         //System.setProperty("https.protocols", "TLSv1.2");
         //System.setProperty("javax.net.debug", "all");
-        
-        RxSocketChannel rxSocket = RxSocketChannel.create()
-                .port(1012)
-                .hostname("tls-v1-2.badssl.com");
 
         RxSSLSocket.create()
-                .rxSocketChannel(rxSocket)
+                .hostname("tls-v1-2.badssl.com")
+                .port(1012)
                 .sslContext(SSLContext.getDefault())
                 .connect()
                 .switchMap(connection -> {
                     ByteBuffer buffer = ByteBuffer.wrap(HTTP_MESSAGE);
                     return connection.write(buffer)
-                            .then(connection.read(1));
+                            .then(connection.read());
                     //return connection.read(1).repeat();
                 })
                 .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
