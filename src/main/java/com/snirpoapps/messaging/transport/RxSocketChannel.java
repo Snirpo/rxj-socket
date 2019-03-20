@@ -12,27 +12,21 @@ import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.channels.CompletionHandler;
 
-public class RxSocket {
-    private static final Logger LOGGER = LoggerFactory.getLogger(RxSocket.class);
+public class RxSocketChannel {
+    private static final Logger LOGGER = LoggerFactory.getLogger(RxSocketChannel.class);
 
-    private int bufferSize = 2048;
     private String hostname;
     private int port;
 
-    private RxSocket() {
+    private RxSocketChannel() {
     }
 
-    public RxSocket bufferSize(int bufferSize) {
-        this.bufferSize = bufferSize;
-        return this;
-    }
-
-    public RxSocket hostname(String hostname) {
+    public RxSocketChannel hostname(String hostname) {
         this.hostname = hostname;
         return this;
     }
 
-    public RxSocket port(int port) {
+    public RxSocketChannel port(int port) {
         this.port = port;
         return this;
     }
@@ -40,7 +34,6 @@ public class RxSocket {
     public Flux<Connection> connect() {
         final String hostname = this.hostname;
         final int port = this.port;
-        final int bufferSize = this.bufferSize;
 
         return Flux.<Connection>create(subscriber -> {
             AsynchronousSocketChannel socketChannel;
@@ -62,7 +55,7 @@ public class RxSocket {
             socketChannel.connect(new InetSocketAddress(hostname, port), null, new CompletionHandler<Void, AsynchronousSocketChannel>() {
                 @Override
                 public void completed(Void result, AsynchronousSocketChannel channel) {
-                    subscriber.next(new Connection(socketChannel, bufferSize));
+                    subscriber.next(new Connection(socketChannel));
                 }
 
                 @Override
@@ -73,46 +66,28 @@ public class RxSocket {
         });
     }
 
-    public static RxSocket create() {
-        return new RxSocket();
+    public static RxSocketChannel create() {
+        return new RxSocketChannel();
     }
 
     public class Connection {
         private final AsynchronousSocketChannel socketChannel;
-        private final ByteBuffer outgoingData;
-        private ByteBuffer incomingData;
 
-        private Connection(AsynchronousSocketChannel socketChannel, int bufferSize) {
+        private Connection(AsynchronousSocketChannel socketChannel) {
             this.socketChannel = socketChannel;
-            this.outgoingData = ByteBuffer.allocateDirect(bufferSize);
-            this.incomingData = ByteBuffer.allocateDirect(bufferSize);
         }
 
-        public Flux<ByteBuffer> read() {
-            return read(-1);
-        }
-
-        public Flux<ByteBuffer> read(int numBytes) {
-            return Flux.create(emitter -> {
-                if (incomingData.position() != 0 && incomingData.hasRemaining()) {
-                    emitter.next(incomingData);
-                }
-
-                // dynamic increase buffer size
-                if (incomingData.remaining() < numBytes) {
-                    incomingData = ByteBuffer.allocateDirect(incomingData.position() + numBytes).put(incomingData);
-                }
-
-                socketChannel.read(incomingData, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
+        public Mono<ByteBuffer> read(ByteBuffer buffer) {
+            return Mono.create(emitter -> {
+                socketChannel.read(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
                     @Override
                     public void completed(Integer count, AsynchronousSocketChannel channel) {
                         if (count < 0) {
                             emitter.error(new IOException("Unexpected end of stream"));
                             return;
                         }
-                        //LOGGER.debug("INCOMING: " + new String(incomingData.array(), Charset.forName("UTF-8")));
-                        incomingData.flip();
-                        emitter.next(incomingData);
+                        buffer.flip();
+                        emitter.success(buffer);
                     }
 
                     @Override
