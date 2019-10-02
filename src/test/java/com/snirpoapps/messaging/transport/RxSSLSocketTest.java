@@ -31,7 +31,7 @@ public class RxSSLSocketTest {
                 .switchMap(connection -> {
                     ByteBuffer buffer = ByteBuffer.wrap(HTTP_MESSAGE);
                     return connection.write(buffer)
-                            .then(connection.read());
+                            .then(connection.read().next());
                     //return connection.read(1).repeat();
                 })
                 .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
