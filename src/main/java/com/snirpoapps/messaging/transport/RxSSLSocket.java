@@ -81,7 +81,13 @@ public class RxSSLSocket {
 
             this.outgoingPacketData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize());
 
-            writeProcessor.concatMap(it -> it.autoConnect(0)).subscribe(); // Handle write errors
+            writeProcessor
+                    .concatMap(it -> it.autoConnect(0))
+                    .concatWith(Mono.defer(() -> {
+                        sslEngine.closeOutbound();
+                        return doWrite(EMPTY_BUFFER);
+                    }))
+                    .subscribe(); // Handle write errors
 
             this.read$ = Mono.defer(() -> {
                 if (!incomingPacketData.hasRemaining()) {
@@ -115,7 +121,8 @@ public class RxSSLSocket {
                                 this.incomingPacketData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize()).put(incomingPacketData);
                                 return Mono.empty();
                             case CLOSED:
-                                // TODO
+                                sslEngine.closeOutbound();
+                                return write(EMPTY_BUFFER).then(Mono.empty());
                         }
                         return Mono.error(new IllegalStateException("Invalid SSL status: " + it.getStatus()));
                     }).publish().autoConnect(0);
@@ -189,6 +196,10 @@ public class RxSSLSocket {
                         .then(runDelegatedTasks());
             }
             return Mono.empty();
+        }
+
+        public void close() {
+            writeProcessor.onComplete();
         }
     }
 }
