@@ -11,6 +11,7 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.channels.CompletionHandler;
+import java.nio.channels.SocketChannel;
 
 public class RxSocketChannel {
     private static final Logger LOGGER = LoggerFactory.getLogger(RxSocketChannel.class);
@@ -31,39 +32,8 @@ public class RxSocketChannel {
         return this;
     }
 
-    public Flux<Connection> connect() {
-        final String hostname = this.hostname;
-        final int port = this.port;
-
-        return Flux.<Connection>create(subscriber -> {
-            AsynchronousSocketChannel socketChannel;
-
-            try {
-                socketChannel = AsynchronousSocketChannel.open();
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-
-            subscriber.onDispose(() -> {
-                try {
-                    socketChannel.close();
-                } catch (IOException e) {
-                    // ignore
-                }
-            });
-
-            socketChannel.connect(new InetSocketAddress(hostname, port), null, new CompletionHandler<Void, AsynchronousSocketChannel>() {
-                @Override
-                public void completed(Void result, AsynchronousSocketChannel channel) {
-                    subscriber.next(new Connection(socketChannel));
-                }
-
-                @Override
-                public void failed(Throwable exception, AsynchronousSocketChannel channel) {
-                    subscriber.error(exception);
-                }
-            });
-        });
+    public Connection connect() {
+        return new Connection(this.hostname, this.port);
     }
 
     public static RxSocketChannel create() {
@@ -71,47 +41,80 @@ public class RxSocketChannel {
     }
 
     public class Connection {
-        private final AsynchronousSocketChannel socketChannel;
+        private final Mono<AsynchronousSocketChannel> socketChannel$;
 
-        private Connection(AsynchronousSocketChannel socketChannel) {
-            this.socketChannel = socketChannel;
+        private Connection(String hostname, int port) {
+            this.socketChannel$ = Mono.<AsynchronousSocketChannel>create(subscriber -> {
+                AsynchronousSocketChannel socketChannel;
+
+                try {
+                    socketChannel = AsynchronousSocketChannel.open();
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+
+                subscriber.onDispose(() -> {
+                    try {
+                        socketChannel.close();
+                    } catch (Exception e) {
+                        // ignore
+                    }
+                });
+
+                socketChannel.connect(new InetSocketAddress(hostname, port), null, new CompletionHandler<Void, AsynchronousSocketChannel>() {
+                    @Override
+                    public void completed(Void result, AsynchronousSocketChannel channel) {
+                        subscriber.success(socketChannel);
+                    }
+
+                    @Override
+                    public void failed(Throwable exception, AsynchronousSocketChannel channel) {
+                        subscriber.error(exception);
+                    }
+                });
+            }).cache();
         }
 
         public Mono<ByteBuffer> read(ByteBuffer buffer) {
-            return Mono.create(emitter -> {
-                socketChannel.read(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
-                    @Override
-                    public void completed(Integer count, AsynchronousSocketChannel channel) {
-                        if (count < 0) {
-                            emitter.error(new IOException("Unexpected end of stream"));
-                            return;
-                        }
-                        buffer.flip();
-                        emitter.success(buffer);
-                    }
+            return socketChannel$
+                    .flatMap(socketChannel -> {
+                        return Mono.create(emitter -> {
+                            socketChannel.read(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
+                                @Override
+                                public void completed(Integer count, AsynchronousSocketChannel channel) {
+                                    if (count < 0) {
+                                        emitter.error(new IOException("Unexpected end of stream"));
+                                        return;
+                                    }
+                                    buffer.flip();
+                                    emitter.success(buffer);
+                                }
 
-                    @Override
-                    public void failed(Throwable exc, AsynchronousSocketChannel channel) {
-                        emitter.error(exc);
-                    }
-                });
-            });
+                                @Override
+                                public void failed(Throwable exc, AsynchronousSocketChannel channel) {
+                                    emitter.error(exc);
+                                }
+                            });
+                        });
+                    });
         }
 
         public Mono<Void> write(ByteBuffer buffer) {
-            return Mono.create(emitter -> {
-                socketChannel.write(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
-                    @Override
-                    public void completed(Integer result, AsynchronousSocketChannel attachment) {
-                        emitter.success();
-                    }
+            return this.socketChannel$.flatMap(socketChannel -> {
+                return Mono.create(emitter -> {
+                    socketChannel.write(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
+                        @Override
+                        public void completed(Integer result, AsynchronousSocketChannel attachment) {
+                            emitter.success();
+                        }
 
-                    @Override
-                    public void failed(Throwable exception, AsynchronousSocketChannel attachment) {
-                        emitter.error(exception);
-                    }
-                });
-            }).repeat(buffer::hasRemaining).then();
+                        @Override
+                        public void failed(Throwable exception, AsynchronousSocketChannel attachment) {
+                            emitter.error(exception);
+                        }
+                    });
+                }).repeat(buffer::hasRemaining).then();
+            });
         }
     }
 }

@@ -23,19 +23,19 @@ public class RxSSLSocketTest {
         //System.setProperty("https.protocols", "TLSv1.2");
         //System.setProperty("javax.net.debug", "all");
 
-        RxSSLSocket.create()
-                .hostname("tls-v1-2.badssl.com")
-                .port(1012)
-                .sslContext(SSLContext.getDefault())
-                .connect()
-                .switchMap(connection -> {
-                    ByteBuffer buffer = ByteBuffer.wrap(HTTP_MESSAGE);
-                    return connection.write(buffer)
-                            .then(connection.read().next());
-                    //return connection.read(1).repeat();
-                })
-                .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
-                .blockLast();
+//        RxSSLSocket.create()
+//                .hostname("tls-v1-2.badssl.com")
+//                .port(1012)
+//                .sslContext(SSLContext.getDefault())
+//                .connect()
+//                .switchMap(connection -> {
+//                    ByteBuffer buffer = ByteBuffer.wrap(HTTP_MESSAGE);
+//                    return connection.write(buffer)
+//                            .then(connection.read().next());
+//                    //return connection.read(1).repeat();
+//                })
+//                .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
+//                .blockLast();
     }
 
 }

@@ -20,17 +20,16 @@ public class RxSocketTest {
     public void connect() throws NoSuchAlgorithmException, InterruptedException {
         System.setProperty(org.slf4j.impl.SimpleLogger.DEFAULT_LOG_LEVEL_KEY, "TRACE");
         //System.setProperty("https.protocols", "TLSv1.2");
-        //System.setProperty("javax.net.debug", "all");
+        System.setProperty("javax.net.debug", "all");
 
-        RxSocket.create()
+        RxSocket.Connection connection = RxSocket.create()
                 .port(80)
                 .bufferSize(16384)
                 .hostname("www.httpvshttps.com")
-                .connect()
-                .switchMap(connection ->
-                        connection.write(ByteBuffer.wrap(HTTP_MESSAGE))
-                                .thenMany(connection.read().repeat())
-                )
+                .connect();
+
+        connection.write(ByteBuffer.wrap(HTTP_MESSAGE))
+                .thenMany(connection.read().repeat())
                 .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
                 .blockLast();
     }

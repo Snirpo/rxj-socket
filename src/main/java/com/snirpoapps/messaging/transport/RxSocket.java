@@ -37,16 +37,17 @@ public class RxSocket {
         return this;
     }
 
-    public Flux<Connection> connect() {
+    public Connection connect() {
         final String hostname = this.hostname;
         final int port = this.port;
         final int bufferSize = this.bufferSize;
 
-        return RxSocketChannel.create()
-                .hostname(hostname)
-                .port(port)
-                .connect()
-                .map(connection -> new Connection(connection, bufferSize));
+        return new Connection(
+                RxSocketChannel.create()
+                        .hostname(hostname)
+                        .port(port)
+                        .connect(),
+                bufferSize);
     }
 
     public static RxSocket create() {
@@ -67,7 +68,7 @@ public class RxSocket {
         public Mono<ByteBuffer> read() {
             return Mono.defer(() -> {
                 incomingData.clear();
-                return connection.read(incomingData.asReadOnlyBuffer());
+                return connection.read(incomingData);
             });
         }
 

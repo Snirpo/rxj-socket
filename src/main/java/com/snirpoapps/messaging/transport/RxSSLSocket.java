@@ -39,17 +39,17 @@ public class RxSSLSocket {
         return this;
     }
 
-    public Flux<Connection> connect() {
-        final SSLContext sslContext = this.sslContext;
-        final String hostname = this.hostname;
-        final int port = this.port;
-
-        return RxSocketChannel.create()
-                .hostname(hostname)
-                .port(port)
-                .connect()
-                .map(c -> new Connection(c, sslContext));
-    }
+//    public Flux<Connection> connect() {
+//        final SSLContext sslContext = this.sslContext;
+//        final String hostname = this.hostname;
+//        final int port = this.port;
+//
+//        return RxSocketChannel.create()
+//                .hostname(hostname)
+//                .port(port)
+//                .connect()
+//                .map(c -> new Connection(c, sslContext));
+//    }
 
     public static class Connection implements IConnection {
         private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
