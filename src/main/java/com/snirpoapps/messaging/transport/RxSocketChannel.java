@@ -11,7 +11,7 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.channels.CompletionHandler;
-import java.nio.channels.SocketChannel;
+import java.time.Duration;
 
 public class RxSocketChannel {
     private static final Logger LOGGER = LoggerFactory.getLogger(RxSocketChannel.class);
@@ -41,10 +41,10 @@ public class RxSocketChannel {
     }
 
     public class Connection {
-        private final Mono<AsynchronousSocketChannel> socketChannel$;
+        private final Flux<AsynchronousSocketChannel> socketChannel$;
 
         private Connection(String hostname, int port) {
-            this.socketChannel$ = Mono.<AsynchronousSocketChannel>create(subscriber -> {
+            this.socketChannel$ = Flux.<AsynchronousSocketChannel>create(subscriber -> {
                 AsynchronousSocketChannel socketChannel;
 
                 try {
@@ -64,7 +64,7 @@ public class RxSocketChannel {
                 socketChannel.connect(new InetSocketAddress(hostname, port), null, new CompletionHandler<Void, AsynchronousSocketChannel>() {
                     @Override
                     public void completed(Void result, AsynchronousSocketChannel channel) {
-                        subscriber.success(socketChannel);
+                        subscriber.next(socketChannel);
                     }
 
                     @Override
@@ -72,11 +72,12 @@ public class RxSocketChannel {
                         subscriber.error(exception);
                     }
                 });
-            }).cache();
+            }).cache(1, Duration.ofMillis(5000));
         }
 
         public Mono<ByteBuffer> read(ByteBuffer buffer) {
             return socketChannel$
+                    .next()
                     .flatMap(socketChannel -> {
                         return Mono.create(emitter -> {
                             socketChannel.read(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
@@ -100,21 +101,23 @@ public class RxSocketChannel {
         }
 
         public Mono<Void> write(ByteBuffer buffer) {
-            return this.socketChannel$.flatMap(socketChannel -> {
-                return Mono.create(emitter -> {
-                    socketChannel.write(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
-                        @Override
-                        public void completed(Integer result, AsynchronousSocketChannel attachment) {
-                            emitter.success();
-                        }
+            return this.socketChannel$
+                    .next()
+                    .flatMap(socketChannel -> {
+                        return Mono.create(emitter -> {
+                            socketChannel.write(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
+                                @Override
+                                public void completed(Integer result, AsynchronousSocketChannel attachment) {
+                                    emitter.success();
+                                }
 
-                        @Override
-                        public void failed(Throwable exception, AsynchronousSocketChannel attachment) {
-                            emitter.error(exception);
-                        }
+                                @Override
+                                public void failed(Throwable exception, AsynchronousSocketChannel attachment) {
+                                    emitter.error(exception);
+                                }
+                            });
+                        }).repeat(buffer::hasRemaining).then();
                     });
-                }).repeat(buffer::hasRemaining).then();
-            });
         }
     }
 }
