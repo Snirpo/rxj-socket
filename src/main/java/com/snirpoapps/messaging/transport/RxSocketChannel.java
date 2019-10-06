@@ -18,6 +18,7 @@ public class RxSocketChannel {
 
     private String hostname;
     private int port;
+    private int timeout = 5000;
 
     private RxSocketChannel() {
     }
@@ -32,8 +33,13 @@ public class RxSocketChannel {
         return this;
     }
 
+    public RxSocketChannel timeout(int timeout) {
+        this.timeout = timeout;
+        return this;
+    }
+
     public Connection connect() {
-        return new Connection(this.hostname, this.port);
+        return new Connection(this.hostname, this.port, this.timeout);
     }
 
     public static RxSocketChannel create() {
@@ -41,9 +47,9 @@ public class RxSocketChannel {
     }
 
     public class Connection {
-        private final Flux<AsynchronousSocketChannel> socketChannel$;
+        private final Mono<AsynchronousSocketChannel> socketChannel$;
 
-        private Connection(String hostname, int port) {
+        private Connection(String hostname, int port, int timeout) {
             this.socketChannel$ = Flux.<AsynchronousSocketChannel>create(subscriber -> {
                 AsynchronousSocketChannel socketChannel;
 
@@ -72,12 +78,11 @@ public class RxSocketChannel {
                         subscriber.error(exception);
                     }
                 });
-            }).cache(1, Duration.ofMillis(5000));
+            }).cache(1, Duration.ofMillis(timeout)).next();
         }
 
         public Mono<ByteBuffer> read(ByteBuffer buffer) {
             return socketChannel$
-                    .next()
                     .flatMap(socketChannel -> {
                         return Mono.create(emitter -> {
                             socketChannel.read(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
@@ -102,7 +107,6 @@ public class RxSocketChannel {
 
         public Mono<Void> write(ByteBuffer buffer) {
             return this.socketChannel$
-                    .next()
                     .flatMap(socketChannel -> {
                         return Mono.create(emitter -> {
                             socketChannel.write(buffer, null, new CompletionHandler<Integer, AsynchronousSocketChannel>() {
