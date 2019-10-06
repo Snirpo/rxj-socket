@@ -1,86 +1,44 @@
 package com.snirpoapps.messaging.transport;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import reactor.core.publisher.Flux;
+import lombok.Builder;
 import reactor.core.publisher.Mono;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.channels.AsynchronousSocketChannel;
-import java.nio.channels.CompletionHandler;
 
 public class RxSocket {
-    private static final Logger LOGGER = LoggerFactory.getLogger(RxSocket.class);
+    private final ByteBuffer outgoingData;
+    private final ByteBuffer incomingData;
+    private final RxSocketChannel socketChannel;
 
-    private int bufferSize = 2048;
-    private String hostname;
-    private int port;
+    @Builder
+    private RxSocket(String hostname, int port, int bufferSize) {
+        if (bufferSize == 0) bufferSize = 2048;
 
-    private RxSocket() {
+        this.outgoingData = ByteBuffer.allocateDirect(bufferSize);
+        this.incomingData = ByteBuffer.allocateDirect(bufferSize);
+
+        this.socketChannel = RxSocketChannel.builder()
+                .hostname(hostname)
+                .port(port)
+                .timeout(5000)
+                .build();
     }
 
-    public RxSocket bufferSize(int bufferSize) {
-        this.bufferSize = bufferSize;
-        return this;
+    public Mono<ByteBuffer> read() {
+        return Mono.defer(() -> {
+            incomingData.clear();
+            return socketChannel.read(incomingData);
+        });
     }
 
-    public RxSocket hostname(String hostname) {
-        this.hostname = hostname;
-        return this;
-    }
-
-    public RxSocket port(int port) {
-        this.port = port;
-        return this;
-    }
-
-    public Connection connect() {
-        final String hostname = this.hostname;
-        final int port = this.port;
-        final int bufferSize = this.bufferSize;
-
-        return new Connection(
-                RxSocketChannel.create()
-                        .hostname(hostname)
-                        .port(port)
-                        .connect(),
-                bufferSize);
-    }
-
-    public static RxSocket create() {
-        return new RxSocket();
-    }
-
-    public class Connection {
-        private final RxSocketChannel.Connection connection;
-        private final ByteBuffer outgoingData;
-        private ByteBuffer incomingData;
-
-        private Connection(RxSocketChannel.Connection connection, int bufferSize) {
-            this.connection = connection;
-            this.outgoingData = ByteBuffer.allocateDirect(bufferSize);
-            this.incomingData = ByteBuffer.allocateDirect(bufferSize);
-        }
-
-        public Mono<ByteBuffer> read() {
-            return Mono.defer(() -> {
-                incomingData.clear();
-                return connection.read(incomingData);
-            });
-        }
-
-        public Mono<Void> write(ByteBuffer buffer) {
-            return Mono.defer(() -> {
-                outgoingData.clear();
-                while (buffer.hasRemaining() && outgoingData.hasRemaining()) {
-                    outgoingData.put(buffer.get());
-                }
-                outgoingData.flip();
-                return connection.write(outgoingData);
-            }).repeat(buffer::hasRemaining).then();
-        }
+    public Mono<Void> write(ByteBuffer buffer) {
+        return Mono.defer(() -> {
+            outgoingData.clear();
+            while (buffer.hasRemaining() && outgoingData.hasRemaining()) {
+                outgoingData.put(buffer.get());
+            }
+            outgoingData.flip();
+            return socketChannel.write(outgoingData);
+        }).repeat(buffer::hasRemaining).then();
     }
 }
