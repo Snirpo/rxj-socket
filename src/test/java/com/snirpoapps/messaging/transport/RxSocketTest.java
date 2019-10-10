@@ -23,18 +23,17 @@ public class RxSocketTest {
         //System.setProperty("https.protocols", "TLSv1.2");
         System.setProperty("javax.net.debug", "all");
 
-        RxSocket socket = RxSocket.builder()
+        RxSocket.builder()
                 .port(80)
                 .bufferSize(16384)
                 .hostname("www.httpvshttps.com")
-                .build();
-
-        long time = System.currentTimeMillis();
-        socket.write(ByteBuffer.wrap(HTTP_MESSAGE))
-                .thenMany(socket.read().repeat())
-                .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
-                .blockLast(Duration.ofMillis(2000));
-        System.out.println("Duration: " + (System.currentTimeMillis() - time));
+                .build()
+                .connect()
+                .flatMapMany(connection -> {
+                    return connection.write(ByteBuffer.wrap(HTTP_MESSAGE))
+                            .thenMany(connection.read().repeat())
+                            .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)));
+                }).take(Duration.ofMillis(2000)).blockLast();
     }
 
 }

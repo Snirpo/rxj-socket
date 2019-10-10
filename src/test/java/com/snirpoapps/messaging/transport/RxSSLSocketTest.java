@@ -28,10 +28,12 @@ public class RxSSLSocketTest {
                 .build();
 
         ByteBuffer buffer = ByteBuffer.wrap(HTTP_MESSAGE);
-        socket.write(buffer)
-                .then(socket.read().next())
-                .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)))
-                .block();
+        socket.connect()
+                .flatMap(connection -> {
+                    return connection.write(buffer)
+                            .then(connection.read().next())
+                            .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)));
+                }).block();
     }
 
 }
