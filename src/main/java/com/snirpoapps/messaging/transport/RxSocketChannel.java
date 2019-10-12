@@ -14,7 +14,7 @@ import java.nio.channels.CompletionHandler;
 import java.time.Duration;
 
 public class RxSocketChannel {
-    private final Mono<Connection> connection$;
+    private final Flux<Connection> connection$;
 
     @Builder
     private RxSocketChannel(String hostname, int port, int timeout) {
@@ -46,10 +46,10 @@ public class RxSocketChannel {
                         throw Exceptions.propagate(e);
                     }
                 }
-        ).cache(1, Duration.ofMillis(timeout)).next();
+        ).replay(1).refCount(1, Duration.ofMillis(3000));
     }
 
-    public Mono<Connection> connect() {
+    public Flux<Connection> connect() {
         return connection$;
     }
 

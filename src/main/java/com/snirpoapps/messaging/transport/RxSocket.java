@@ -7,7 +7,7 @@ import reactor.core.publisher.Mono;
 import java.nio.ByteBuffer;
 
 public class RxSocket {
-    private final Mono<Connection> connection$;
+    private final Flux<Connection> connection$;
 
     @Builder
     private RxSocket(String hostname, int port, int bufferSize) {
@@ -17,14 +17,11 @@ public class RxSocket {
                 .timeout(5000)
                 .build();
 
-        this.connection$ = Flux.usingWhen(
-                socketChannel.connect(),
-                connection -> Flux.just(new Connection(connection, bufferSize)),
-                connection -> Flux.empty()
-        ).next();
+        this.connection$ = socketChannel.connect()
+                .map(connection -> new Connection(connection, bufferSize));
     }
 
-    public Mono<Connection> connect() {
+    public Flux<Connection> connect() {
         return connection$;
     }
 
