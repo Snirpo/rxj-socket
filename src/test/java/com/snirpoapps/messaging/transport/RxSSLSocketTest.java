@@ -33,7 +33,7 @@ public class RxSSLSocketTest {
                     return connection.write(buffer)
                             .then(connection.read().next())
                             .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)));
-                }).blockLast();
+                }).block();
     }
 
 }

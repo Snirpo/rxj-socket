@@ -3,7 +3,6 @@ package com.snirpoapps.messaging.transport;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import reactor.core.Exceptions;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.io.IOException;
@@ -11,50 +10,38 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.channels.CompletionHandler;
-import java.time.Duration;
 
-public class RxSocketChannel {
-    private final Flux<Connection> connection$;
+public class RxSocketChannel implements RxConnectable<RxSocketChannel.Connection> {
+    private final Mono<Connection> connection$;
 
     @Builder
-    private RxSocketChannel(String hostname, int port, int timeout) {
-        connection$ = Flux.<Connection, AsynchronousSocketChannel>using(
-                () -> {
-                    try {
-                        return AsynchronousSocketChannel.open();
-                    } catch (IOException e) {
-                        throw Exceptions.propagate(e);
+    private RxSocketChannel(String hostname, int port) {
+        connection$ = Mono.create(emitter -> {
+            try {
+                AsynchronousSocketChannel socketChannel = AsynchronousSocketChannel.open();
+                socketChannel.connect(new InetSocketAddress(hostname, port), null, new CompletionHandler<Void, AsynchronousSocketChannel>() {
+                    @Override
+                    public void completed(Void result, AsynchronousSocketChannel channel) {
+                        emitter.success(new Connection(socketChannel));
                     }
-                },
-                socketChannel -> Flux.push(emitter -> {
-                    socketChannel.connect(new InetSocketAddress(hostname, port), null, new CompletionHandler<Void, AsynchronousSocketChannel>() {
-                        @Override
-                        public void completed(Void result, AsynchronousSocketChannel channel) {
-                            emitter.next(new Connection(socketChannel));
-                        }
 
-                        @Override
-                        public void failed(Throwable exception, AsynchronousSocketChannel channel) {
-                            emitter.error(exception);
-                        }
-                    });
-                }),
-                socketChannel -> {
-                    try {
-                        socketChannel.close();
-                    } catch (IOException e) {
-                        throw Exceptions.propagate(e);
+                    @Override
+                    public void failed(Throwable exception, AsynchronousSocketChannel channel) {
+                        emitter.error(exception);
                     }
-                }
-        ).replay(1).refCount(1, Duration.ofMillis(3000));
+                });
+            } catch (IOException e) {
+                throw Exceptions.propagate(e);
+            }
+        });
     }
 
-    public Flux<Connection> connect() {
+    public Mono<Connection> connect() {
         return connection$;
     }
 
     @AllArgsConstructor
-    public static class Connection {
+    public static class Connection implements RxCloseable {
         private final AsynchronousSocketChannel socketChannel;
 
         public Mono<ByteBuffer> read(ByteBuffer buffer) {
@@ -92,6 +79,17 @@ public class RxSocketChannel {
                     }
                 });
             }).repeat(buffer::hasRemaining).then();
+        }
+
+        @Override
+        public Mono<Void> close() {
+            return Mono.fromRunnable(() -> {
+                try {
+                    socketChannel.close();
+                } catch (IOException e) {
+                    throw Exceptions.propagate(e);
+                }
+            });
         }
     }
 }

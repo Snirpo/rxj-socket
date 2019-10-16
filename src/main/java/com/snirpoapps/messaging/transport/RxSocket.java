@@ -1,31 +1,30 @@
 package com.snirpoapps.messaging.transport;
 
 import lombok.Builder;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.ByteBuffer;
 
-public class RxSocket {
-    private final Flux<Connection> connection$;
+public class RxSocket implements RxConnectable<RxSocket.Connection> {
+    private final Mono<Connection> connection$;
 
     @Builder
     private RxSocket(String hostname, int port, int bufferSize) {
         RxSocketChannel socketChannel = RxSocketChannel.builder()
                 .hostname(hostname)
                 .port(port)
-                .timeout(5000)
                 .build();
 
         this.connection$ = socketChannel.connect()
                 .map(connection -> new Connection(connection, bufferSize));
     }
 
-    public Flux<Connection> connect() {
+    @Override
+    public Mono<Connection> connect() {
         return connection$;
     }
 
-    public static class Connection {
+    public static class Connection implements RxConnection {
         private final RxSocketChannel.Connection connection;
 
         private final ByteBuffer outgoingData;
@@ -39,6 +38,7 @@ public class RxSocket {
             this.incomingData = ByteBuffer.allocateDirect(bufferSize);
         }
 
+        @Override
         public Mono<ByteBuffer> read() {
             return Mono.defer(() -> {
                 incomingData.clear();
@@ -46,6 +46,7 @@ public class RxSocket {
             });
         }
 
+        @Override
         public Mono<Void> write(ByteBuffer buffer) {
             return Mono.defer(() -> {
                 outgoingData.clear();
@@ -55,6 +56,11 @@ public class RxSocket {
                 outgoingData.flip();
                 return connection.write(outgoingData);
             }).repeat(buffer::hasRemaining).then();
+        }
+
+        @Override
+        public Mono<Void> close() {
+            return connection.close();
         }
     }
 }

@@ -14,7 +14,7 @@ import java.nio.ByteBuffer;
 @Slf4j
 public class RxSSLSocket {
 
-    private final Flux<Connection> connection$;
+    private Mono<Connection> connection$;
 
     @Builder
     @SneakyThrows
@@ -22,17 +22,16 @@ public class RxSSLSocket {
         RxSocketChannel socketChannel = RxSocketChannel.builder()
                 .hostname(hostname)
                 .port(port)
-                .timeout(5000)
                 .build();
 
-        this.connection$ = Flux.usingWhen(
-                socketChannel.connect().map(connection -> new Connection(connection, sslContext)),
-                it -> Flux.push(emitter -> emitter.next(it)),
-                it -> Flux.empty()
-        );
+//        this.connection$ = Flux.usingWhen(
+//                socketChannel.connect().map(connection -> new Connection(connection, sslContext)),
+//                it -> Mono.ki,
+//                it -> Flux.empty()
+//        );
     }
 
-    public Flux<Connection> connect() {
+    public Mono<Connection> connect() {
         return connection$;
     }
 
