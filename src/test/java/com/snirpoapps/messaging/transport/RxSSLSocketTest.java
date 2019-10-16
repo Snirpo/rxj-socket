@@ -5,6 +5,7 @@ import org.junit.Test;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 
 public class RxSSLSocketTest {
 
@@ -28,12 +29,11 @@ public class RxSSLSocketTest {
                 .build();
 
         ByteBuffer buffer = ByteBuffer.wrap(HTTP_MESSAGE);
-        socket.connect()
-                .flatMap(connection -> {
-                    return connection.write(buffer)
-                            .then(connection.read().next())
-                            .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)));
-                }).block();
+        socket.use(connection -> {
+            return connection.write(buffer)
+                    .thenMany(connection.read().next())
+                    .doOnNext(b -> System.out.println(StandardCharsets.UTF_8.decode(b)));
+        }).take(Duration.ofMillis(2000)).blockLast();
     }
 
 }

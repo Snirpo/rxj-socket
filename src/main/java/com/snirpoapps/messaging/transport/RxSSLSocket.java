@@ -12,7 +12,7 @@ import javax.net.ssl.SSLException;
 import java.nio.ByteBuffer;
 
 @Slf4j
-public class RxSSLSocket {
+public class RxSSLSocket implements RxConnectable<RxSSLSocket.Connection> {
 
     private Mono<Connection> connection$;
 
@@ -24,18 +24,15 @@ public class RxSSLSocket {
                 .port(port)
                 .build();
 
-//        this.connection$ = Flux.usingWhen(
-//                socketChannel.connect().map(connection -> new Connection(connection, sslContext)),
-//                it -> Mono.ki,
-//                it -> Flux.empty()
-//        );
+        this.connection$ = socketChannel.connect()
+                .map(connection -> new Connection(connection, sslContext));
     }
 
     public Mono<Connection> connect() {
         return connection$;
     }
 
-    public static class Connection {
+    public static class Connection implements RxConnection {
         private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
 
         private final SSLEngine sslEngine;
@@ -89,7 +86,7 @@ public class RxSSLSocket {
                         switch (it.getStatus()) {
                             case OK:
                                 incomingAppData.flip();
-                                return Mono.just(incomingAppData.asReadOnlyBuffer());
+                                return waitForHandshake(it).then(Mono.just(incomingAppData.asReadOnlyBuffer()));
                             case BUFFER_OVERFLOW:
                                 // Will occur when peerAppData's capacity is smaller than the data derived from incomingAppData's unwrap.
                                 this.incomingAppData = ByteBuffer.allocateDirect(sslEngine.getSession().getApplicationBufferSize());
@@ -100,22 +97,26 @@ public class RxSSLSocket {
                                 return Mono.empty();
                             case CLOSED:
                                 sslEngine.closeOutbound();
-                                return write(EMPTY_BUFFER).then(Mono.empty());
+                                return Mono.empty();
                         }
                         return Mono.error(new IllegalStateException("Invalid SSL status: " + it.getStatus()));
                     }).publish().autoConnect(0);
         }
 
+        @Override
         public Flux<ByteBuffer> read() {
             return read$.filter(ByteBuffer::hasRemaining);
         }
 
+        @Override
         public Mono<Void> write(ByteBuffer buffer) {
-            ConnectableFlux<Void> write$ = doWrite(buffer)
-                    .repeat(buffer::hasRemaining)
-                    .replay();
-            writeSink.next(write$);
-            return write$.then();
+//            ConnectableFlux<Void> write$ = doWrite(buffer)
+//                    .repeat(buffer::hasRemaining)
+//                    //.flux()
+//                    .replay();
+//            writeSink.next(write$);
+//            return write$.then();
+            return doWrite(buffer);
         }
 
         private Mono<Void> doWrite(ByteBuffer buffer) {
@@ -143,7 +144,7 @@ public class RxSSLSocket {
                     case BUFFER_UNDERFLOW:
                         return Mono.error(new SSLException("Buffer underflow occurred after a wrap."));
                     case CLOSED:
-                        // TODO
+                        return Mono.empty();
                 }
                 return Mono.error(new IllegalStateException("Invalid SSL status: " + result.getStatus()));
             });
@@ -174,10 +175,15 @@ public class RxSSLSocket {
             return Mono.empty();
         }
 
-        private Mono<Void> close() {
+        @Override
+        public Mono<Void> close() {
             return Mono.defer(() -> {
+                if (sslEngine.isOutboundDone()) {
+                    return Mono.empty();
+                }
                 sslEngine.closeOutbound();
-                return doWrite(EMPTY_BUFFER);
+                return doWrite(EMPTY_BUFFER)
+                        .then(connection.close());
             });
         }
     }

@@ -1,6 +1,7 @@
 package com.snirpoapps.messaging.transport;
 
 import lombok.Builder;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.ByteBuffer;
@@ -39,11 +40,11 @@ public class RxSocket implements RxConnectable<RxSocket.Connection> {
         }
 
         @Override
-        public Mono<ByteBuffer> read() {
+        public Flux<ByteBuffer> read() {
             return Mono.defer(() -> {
                 incomingData.clear();
                 return connection.read(incomingData);
-            });
+            }).repeat();
         }
 
         @Override
