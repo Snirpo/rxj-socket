@@ -102,8 +102,7 @@ public class RxSSLSocket implements RxConnectable<RxSSLSocket.Connection> {
                 case BUFFER_UNDERFLOW:
                     // Will occur either when no data was read from the peer or when the incomingAppData buffer was too small to hold all peer's data.
                     this.incomingPacketData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize()).put(incomingPacketData);
-                    this.incomingPacketData.flip();
-                    return doRead()
+                    return connection.read(incomingPacketData)
                             .map(this::doUnwrap)
                             .flatMap(this::parseUnwrap);
                 case CLOSED:
@@ -115,9 +114,7 @@ public class RxSSLSocket implements RxConnectable<RxSSLSocket.Connection> {
 
         @Override
         public Flux<ByteBuffer> read() {
-            //return read$
-            //.filter(ByteBuffer::hasRemaining);
-            return Flux.empty();
+            return read$.filter(ByteBuffer::hasRemaining);
         }
 
         @Override
