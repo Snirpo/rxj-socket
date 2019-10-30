@@ -65,8 +65,8 @@ public class RxSSLSocket implements RxConnectable<RxSSLSocket.Connection> {
                     .subscribe(); // Handle write errors
 
             this.read$ = doRead()
-                    .map(this::doUnwrap)
                     .repeat()
+                    .map(this::doUnwrap)
                     .takeUntil(it -> SSLEngineResult.Status.CLOSED.equals(it.getStatus()))
                     .flatMap(this::parseUnwrap)
                     .publish()
@@ -100,8 +100,12 @@ public class RxSSLSocket implements RxConnectable<RxSSLSocket.Connection> {
                     this.incomingAppData = ByteBuffer.allocateDirect(sslEngine.getSession().getApplicationBufferSize());
                     return parseUnwrap(doUnwrap(incomingPacketData));
                 case BUFFER_UNDERFLOW:
-                    // Will occur either when no data was read from the peer or when the incomingAppData buffer was too small to hold all peer's data.
-                    this.incomingPacketData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize()).put(incomingPacketData);
+                    // Will occur either when no data was read from the peer or when the incomingPacketData buffer was too small to hold all peer's data.
+                    if (this.incomingPacketData.capacity() < sslEngine.getSession().getPacketBufferSize()) {
+                        this.incomingPacketData = ByteBuffer.allocateDirect(sslEngine.getSession().getPacketBufferSize()).put(incomingPacketData);
+                    } else {
+                        this.incomingPacketData.flip();
+                    }
                     return connection.read(incomingPacketData)
                             .map(this::doUnwrap)
                             .flatMap(this::parseUnwrap);
