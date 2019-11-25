@@ -4,6 +4,9 @@ import lombok.Builder;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.*;
+import reactor.function.TupleUtils;
+import reactor.util.function.Tuple2;
+import reactor.util.function.Tuples;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
@@ -65,10 +68,11 @@ public class RxSSLSocket implements RxConnectable<RxSSLSocket.Connection> {
                     .subscribe(); // Handle write errors
 
             this.read$ = doRead()
-                    .repeat()
                     .map(this::doUnwrap)
-                    .takeUntil(it -> SSLEngineResult.Status.CLOSED.equals(it.getStatus()))
-                    .flatMap(this::parseUnwrap)
+                    .flatMap(TupleUtils.function(this::parseUnwrap))
+                    .map(Tuple2::getT2)
+                    .repeat()
+                    .takeUntil(it -> SSLEngineResult.Status.CLOSED.equals(it.getT1().getStatus()))
                     .publish()
                     .autoConnect(0);
         }
@@ -84,21 +88,23 @@ public class RxSSLSocket implements RxConnectable<RxSSLSocket.Connection> {
         }
 
         @SneakyThrows
-        private SSLEngineResult doUnwrap(ByteBuffer data) {
+        private Tuple2<SSLEngineResult, ByteBuffer> doUnwrap(ByteBuffer data) {
             incomingAppData.clear();
-            return sslEngine.unwrap(data, incomingAppData);
+            SSLEngineResult result = sslEngine.unwrap(data, incomingAppData);
+            log.debug("UNWRAP " + result);
+            return Tuples.of(result, incomingAppData);
         }
 
-        private Mono<ByteBuffer> parseUnwrap(SSLEngineResult it) {
-            log.debug("UNWRAP " + it);
-            switch (it.getStatus()) {
+        @SneakyThrows
+        private Mono<Tuple2<SSLEngineResult.HandshakeStatus, ByteBuffer>> parseUnwrap(SSLEngineResult result, ByteBuffer data) {
+            switch (result.getStatus()) {
                 case OK:
-                    incomingAppData.flip();
-                    return Mono.just(incomingAppData.asReadOnlyBuffer());
+                    data.flip();
+                    return Mono.just(Tuples.of(result.getHandshakeStatus(), data.asReadOnlyBuffer()));
                 case BUFFER_OVERFLOW:
                     // Will occur when peerAppData's capacity is smaller than the data derived from incomingAppData's unwrap.
                     this.incomingAppData = ByteBuffer.allocateDirect(sslEngine.getSession().getApplicationBufferSize());
-                    return parseUnwrap(doUnwrap(incomingPacketData));
+                    return Mono.empty();
                 case BUFFER_UNDERFLOW:
                     // Will occur either when no data was read from the peer or when the incomingPacketData buffer was too small to hold all peer's data.
                     if (this.incomingPacketData.capacity() < sslEngine.getSession().getPacketBufferSize()) {
@@ -106,14 +112,12 @@ public class RxSSLSocket implements RxConnectable<RxSSLSocket.Connection> {
                     } else {
                         this.incomingPacketData.flip();
                     }
-                    return connection.read(incomingPacketData)
-                            .map(this::doUnwrap)
-                            .flatMap(this::parseUnwrap);
+                    return Mono.empty();
                 case CLOSED:
                     sslEngine.closeOutbound();
                     return Mono.empty();
             }
-            return Mono.error(new IllegalStateException("Invalid SSL status: " + it.getStatus()));
+            return Mono.error(new IllegalStateException("Invalid SSL status: " + result.getStatus()));
         }
 
         @Override
